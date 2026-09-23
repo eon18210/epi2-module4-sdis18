@@ -286,9 +286,13 @@ const EMAIL_DESTINATAIRE  = "vieon@sdis18.fr"; // à adapter
 
 emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
 
-// Réglages de compression des photos (garder les mails légers)
-const LARGEUR_MAX = 480;   // pixels
-const QUALITE_JPEG = 0.4;  // 0 à 1
+// Réglages de compression des photos
+// EmailJS limite chaque envoi à 50 Ko de variables au total.
+// On envoie 2 photos par mail (2 mails par contrôle) donc chaque photo
+// doit rester sous ~18 Ko de texte base64 — ajusté automatiquement.
+const LARGEUR_DEPART = 520;  // pixels, point de départ
+const BUDGET_CHARS = 18000;  // taille max (caractères base64) par photo
+const PLACEHOLDER_PIXEL = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 
 let momentChoisi = "";
 const photos = { rangers: null, gants: null, pantalon: null, veste: null };
@@ -302,20 +306,38 @@ document.querySelectorAll("#momentChoix button").forEach(btn => {
   });
 });
 
-// Compression d'une image en dataURL JPEG
+// Compression adaptative : réduit la qualité puis la largeur jusqu'à
+// passer sous BUDGET_CHARS, quel que soit le contenu de la photo.
 function compresserImage(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = e => {
       const img = new Image();
       img.onload = () => {
-        const ratio = Math.min(1, LARGEUR_MAX / img.width);
-        const canvas = document.createElement("canvas");
-        canvas.width = img.width * ratio;
-        canvas.height = img.height * ratio;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", QUALITE_JPEG));
+        let largeur = Math.min(LARGEUR_DEPART, img.width);
+        let qualite = 0.55;
+        let dataUrl = "";
+
+        const rendre = () => {
+          const ratio = largeur / img.width;
+          const canvas = document.createElement("canvas");
+          canvas.width = largeur;
+          canvas.height = img.height * ratio;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          return canvas.toDataURL("image/jpeg", qualite);
+        };
+
+        dataUrl = rendre();
+        while (dataUrl.length > BUDGET_CHARS && qualite > 0.15) {
+          qualite -= 0.1;
+          dataUrl = rendre();
+        }
+        while (dataUrl.length > BUDGET_CHARS && largeur > 180) {
+          largeur -= 60;
+          dataUrl = rendre();
+        }
+        resolve(dataUrl);
       };
       img.onerror = reject;
       img.src = e.target.result;
@@ -370,14 +392,13 @@ document.getElementById("btnEnvoyer").addEventListener("click", () => {
 
   const btnEnvoyer = document.getElementById("btnEnvoyer");
   btnEnvoyer.disabled = true;
-  statut.textContent = "Envoi en cours...";
 
   const etats = {};
   document.querySelectorAll(".etat-select").forEach(sel => {
     etats[sel.dataset.etat] = sel.value;
   });
 
-  const params = {
+  const base = {
     to_email: EMAIL_DESTINATAIRE,
     stagiaire: nom,
     matricule: matricule,
@@ -388,14 +409,34 @@ document.getElementById("btnEnvoyer").addEventListener("click", () => {
     etat_rangers: etats.rangers,
     etat_gants: etats.gants,
     etat_pantalon: etats.pantalon,
-    etat_veste: etats.veste,
+    etat_veste: etats.veste
+  };
+
+  // Mail 1/2 : rangers + gants (pantalon/veste en image vide)
+  const params1 = {
+    ...base,
     photo_rangers: photos.rangers,
     photo_gants: photos.gants,
+    photo_pantalon: PLACEHOLDER_PIXEL,
+    photo_veste: PLACEHOLDER_PIXEL
+  };
+
+  // Mail 2/2 : pantalon + veste (rangers/gants en image vide)
+  const params2 = {
+    ...base,
+    photo_rangers: PLACEHOLDER_PIXEL,
+    photo_gants: PLACEHOLDER_PIXEL,
     photo_pantalon: photos.pantalon,
     photo_veste: photos.veste
   };
 
-  emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params)
+  statut.textContent = "Envoi 1/2...";
+
+  emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params1)
+    .then(() => {
+      statut.textContent = "Envoi 2/2...";
+      return emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params2);
+    })
     .then(() => {
       statut.textContent = "Contrôle envoyé — merci !";
       statut.className = "ok";

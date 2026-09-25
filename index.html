@@ -268,36 +268,45 @@
     <textarea id="commentaire" placeholder="Ex : rangers percées côté gauche, à signaler à l'habillement..."></textarea>
   </div>
 
+  <div class="bloc">
+    <h2>Destinataire du contrôle</h2>
+    <label for="emailDestinataire">Adresse e-mail</label>
+    <input type="email" id="emailDestinataire" value="vieon@sdis18.fr" placeholder="nom@sdis18.fr">
+  </div>
+
   <button class="envoyer" id="btnEnvoyer">Envoyer le contrôle</button>
   <div id="statut"></div>
+
+  <footer style="text-align:center; font-size:12px; color:#8A9096; margin-top:24px; padding:0 16px;">
+    Application créée par Sch Eon Vincent — SDIS 18
+  </footer>
 
 </main>
 
 <script>
 /* ============================================================
    CONFIGURATION — à compléter avant mise en ligne
-   Créer un compte sur emailjs.com (comme pour le QCM Module 4),
-   un service, un template, et une clé publique.
+   1) EmailJS (emailjs.com) : service, template, clé publique
+   2) imgbb (api.imgbb.com) : clé API — héberge les photos pour
+      qu'elles arrivent en vrai lien dans le mail (Outlook bloque
+      les images "codées en texte" directement dans le corps du mail)
    ============================================================ */
 const EMAILJS_PUBLIC_KEY  = "x0m4gz5oZyfsyw3db";
 const EMAILJS_SERVICE_ID  = "service_sdis18";
 const EMAILJS_TEMPLATE_ID = "template_z95g1mo";
-const EMAIL_DESTINATAIRE  = "vieon@sdis18.fr"; // à adapter
+const IMGBB_API_KEY       = "c9166a3f91a41fff4edff2dc1e25f216";
 
 emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
 
-// Réglages de compression des photos
-// EmailJS limite chaque envoi à 50 Ko de variables au total.
-// On envoie 2 photos par mail (2 mails par contrôle) donc chaque photo
-// doit rester sous ~18 Ko de texte base64 — ajusté automatiquement.
-const LARGEUR_DEPART = 520;  // pixels, point de départ
-const BUDGET_CHARS = 18000;  // taille max (caractères base64) par photo
-const PLACEHOLDER_PIXEL = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+// Reglages de compression avant envoi vers imgbb (juste pour aller
+// plus vite en reseau mobile, pas de limite stricte comme avant)
+const LARGEUR_DEPART = 900;  // pixels
+const QUALITE_JPEG = 0.7;
 
 let momentChoisi = "";
 const photos = { rangers: null, gants: null, pantalon: null, veste: null };
 
-// Sélection du moment
+// Selection du moment
 document.querySelectorAll("#momentChoix button").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll("#momentChoix button").forEach(b => b.classList.remove("actif"));
@@ -306,38 +315,21 @@ document.querySelectorAll("#momentChoix button").forEach(btn => {
   });
 });
 
-// Compression adaptative : réduit la qualité puis la largeur jusqu'à
-// passer sous BUDGET_CHARS, quel que soit le contenu de la photo.
+// Compression d'une image en dataURL JPEG
 function compresserImage(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = e => {
       const img = new Image();
       img.onload = () => {
-        let largeur = Math.min(LARGEUR_DEPART, img.width);
-        let qualite = 0.55;
-        let dataUrl = "";
-
-        const rendre = () => {
-          const ratio = largeur / img.width;
-          const canvas = document.createElement("canvas");
-          canvas.width = largeur;
-          canvas.height = img.height * ratio;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          return canvas.toDataURL("image/jpeg", qualite);
-        };
-
-        dataUrl = rendre();
-        while (dataUrl.length > BUDGET_CHARS && qualite > 0.15) {
-          qualite -= 0.1;
-          dataUrl = rendre();
-        }
-        while (dataUrl.length > BUDGET_CHARS && largeur > 180) {
-          largeur -= 60;
-          dataUrl = rendre();
-        }
-        resolve(dataUrl);
+        const largeur = Math.min(LARGEUR_DEPART, img.width);
+        const ratio = largeur / img.width;
+        const canvas = document.createElement("canvas");
+        canvas.width = largeur;
+        canvas.height = img.height * ratio;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", QUALITE_JPEG));
       };
       img.onerror = reject;
       img.src = e.target.result;
@@ -347,7 +339,19 @@ function compresserImage(file) {
   });
 }
 
-// Câblage des 4 zones photo (bouton -> input file -> compression -> aperçu)
+// Upload d'une image compressee vers imgbb, retourne son URL publique
+async function uploaderPhoto(dataUrl) {
+  const base64 = dataUrl.split(",")[1];
+  const formData = new FormData();
+  formData.append("key", IMGBB_API_KEY);
+  formData.append("image", base64);
+  const res = await fetch("https://api.imgbb.com/1/upload", { method: "POST", body: formData });
+  const json = await res.json();
+  if (!json.success) throw new Error("upload imgbb echoue");
+  return json.data.url;
+}
+
+// Cablage des 4 zones photo : prise -> compression -> upload -> apercu
 ["rangers", "gants", "pantalon", "veste"].forEach(item => {
   const btn = document.getElementById("btn-" + item);
   const input = document.getElementById("file-" + item);
@@ -357,49 +361,56 @@ function compresserImage(file) {
 
   input.addEventListener("change", async () => {
     if (!input.files[0]) return;
-    btn.textContent = "Traitement...";
+    photos[item] = null;
+    btn.classList.remove("pris");
+    btn.textContent = "Envoi de la photo...";
     try {
       const dataUrl = await compresserImage(input.files[0]);
-      photos[item] = dataUrl;
       apercu.src = dataUrl;
-      btn.textContent = "Photo prise ✓";
+      const url = await uploaderPhoto(dataUrl);
+      photos[item] = url;
+      btn.textContent = "Photo envoyee \u2713";
       btn.classList.add("pris");
     } catch (err) {
-      btn.textContent = "Erreur, réessayer";
+      btn.textContent = "Echec, reessaie";
+      console.error(err);
     }
   });
 });
 
-// Envoi
+// Envoi du mail (un seul, avec les liens vers les photos)
 document.getElementById("btnEnvoyer").addEventListener("click", () => {
   const nom = document.getElementById("nom").value.trim();
   const matricule = document.getElementById("matricule").value.trim();
   const csSecours = document.getElementById("csSecours").value.trim();
+  const emailDestinataire = document.getElementById("emailDestinataire").value.trim();
   const statut = document.getElementById("statut");
   statut.className = "";
 
   if (!nom) { statut.textContent = "Indique le nom du stagiaire."; statut.className = "err"; return; }
   if (!matricule) { statut.textContent = "Indique le matricule du stagiaire."; statut.className = "err"; return; }
   if (!csSecours) { statut.textContent = "Indique le CS de secours."; statut.className = "err"; return; }
-  if (!momentChoisi) { statut.textContent = "Choisis le moment du contrôle."; statut.className = "err"; return; }
+  if (!emailDestinataire || !emailDestinataire.includes("@")) { statut.textContent = "Indique une adresse e-mail valide."; statut.className = "err"; return; }
+  if (!momentChoisi) { statut.textContent = "Choisis le moment du controle."; statut.className = "err"; return; }
 
   const manquantes = Object.entries(photos).filter(([, v]) => !v).map(([k]) => k);
   if (manquantes.length) {
-    statut.textContent = "Photo manquante : " + manquantes.join(", ");
+    statut.textContent = "Photo manquante ou pas encore envoyee : " + manquantes.join(", ");
     statut.className = "err";
     return;
   }
 
   const btnEnvoyer = document.getElementById("btnEnvoyer");
   btnEnvoyer.disabled = true;
+  statut.textContent = "Envoi du mail...";
 
   const etats = {};
   document.querySelectorAll(".etat-select").forEach(sel => {
     etats[sel.dataset.etat] = sel.value;
   });
 
-  const base = {
-    to_email: EMAIL_DESTINATAIRE,
+  const params = {
+    to_email: emailDestinataire,
     stagiaire: nom,
     matricule: matricule,
     cs_secours: csSecours,
@@ -409,42 +420,22 @@ document.getElementById("btnEnvoyer").addEventListener("click", () => {
     etat_rangers: etats.rangers,
     etat_gants: etats.gants,
     etat_pantalon: etats.pantalon,
-    etat_veste: etats.veste
-  };
-
-  // Mail 1/2 : rangers + gants (pantalon/veste en image vide)
-  const params1 = {
-    ...base,
+    etat_veste: etats.veste,
     photo_rangers: photos.rangers,
     photo_gants: photos.gants,
-    photo_pantalon: PLACEHOLDER_PIXEL,
-    photo_veste: PLACEHOLDER_PIXEL
-  };
-
-  // Mail 2/2 : pantalon + veste (rangers/gants en image vide)
-  const params2 = {
-    ...base,
-    photo_rangers: PLACEHOLDER_PIXEL,
-    photo_gants: PLACEHOLDER_PIXEL,
     photo_pantalon: photos.pantalon,
     photo_veste: photos.veste
   };
 
-  statut.textContent = "Envoi 1/2...";
-
-  emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params1)
+  emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params)
     .then(() => {
-      statut.textContent = "Envoi 2/2...";
-      return emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params2);
-    })
-    .then(() => {
-      statut.textContent = "Contrôle envoyé — merci !";
+      statut.textContent = "Controle envoye \u2014 merci !";
       statut.className = "ok";
       btnEnvoyer.disabled = false;
     })
     .catch(err => {
-      const detail = (err && (err.text || err.message)) ? (" — " + (err.text || err.message)) : "";
-      statut.textContent = "Échec de l'envoi" + detail;
+      const detail = (err && (err.text || err.message)) ? (" \u2014 " + (err.text || err.message)) : "";
+      statut.textContent = "Echec de l'envoi" + detail;
       statut.className = "err";
       btnEnvoyer.disabled = false;
       console.error(err);

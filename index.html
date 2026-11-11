@@ -143,6 +143,9 @@
     color: var(--ok);
     background: #EEF5EE;
   }
+  .boutons-col{ flex:1; display:flex; flex-direction:column; gap:8px; }
+  .boutons-col .bouton-photo{ flex:none; }
+  .bouton-galerie{ font-size:12px; padding:8px; }
   input[type="file"]{ display:none; }
   .envoyer{
     width:100%;
@@ -209,9 +212,13 @@
       </div>
       <div class="zone-photo">
         <img class="apercu" id="apercu-rangers" alt="">
-        <div class="bouton-photo" id="btn-rangers">Prendre la photo</div>
+        <div class="boutons-col">
+          <div class="bouton-photo" id="btn-rangers">Prendre la photo</div>
+          <div class="bouton-photo bouton-galerie" id="gal-rangers">Ou choisir dans la galerie</div>
+        </div>
       </div>
       <input type="file" accept="image/*" capture="environment" id="file-rangers">
+      <input type="file" accept="image/*" id="file-gal-rangers">
     </div>
 
     <div class="epi-item">
@@ -225,9 +232,13 @@
       </div>
       <div class="zone-photo">
         <img class="apercu" id="apercu-gants" alt="">
-        <div class="bouton-photo" id="btn-gants">Prendre la photo</div>
+        <div class="boutons-col">
+          <div class="bouton-photo" id="btn-gants">Prendre la photo</div>
+          <div class="bouton-photo bouton-galerie" id="gal-gants">Ou choisir dans la galerie</div>
+        </div>
       </div>
       <input type="file" accept="image/*" capture="environment" id="file-gants">
+      <input type="file" accept="image/*" id="file-gal-gants">
     </div>
 
     <div class="epi-item">
@@ -241,9 +252,13 @@
       </div>
       <div class="zone-photo">
         <img class="apercu" id="apercu-pantalon" alt="">
-        <div class="bouton-photo" id="btn-pantalon">Prendre la photo</div>
+        <div class="boutons-col">
+          <div class="bouton-photo" id="btn-pantalon">Prendre la photo</div>
+          <div class="bouton-photo bouton-galerie" id="gal-pantalon">Ou choisir dans la galerie</div>
+        </div>
       </div>
       <input type="file" accept="image/*" capture="environment" id="file-pantalon">
+      <input type="file" accept="image/*" id="file-gal-pantalon">
     </div>
 
     <div class="epi-item">
@@ -257,9 +272,13 @@
       </div>
       <div class="zone-photo">
         <img class="apercu" id="apercu-veste" alt="">
-        <div class="bouton-photo" id="btn-veste">Prendre la photo</div>
+        <div class="boutons-col">
+          <div class="bouton-photo" id="btn-veste">Prendre la photo</div>
+          <div class="bouton-photo bouton-galerie" id="gal-veste">Ou choisir dans la galerie</div>
+        </div>
       </div>
       <input type="file" accept="image/*" capture="environment" id="file-veste">
+      <input type="file" accept="image/*" id="file-gal-veste">
     </div>
   </div>
 
@@ -362,30 +381,38 @@ async function uploaderPhoto(dataUrl) {
 }
 
 // Cablage des 4 zones photo : prise -> compression -> upload -> apercu
+// Deux entrees par EPI : appareil photo direct, ou galerie (secours si
+// l'appareil photo du navigateur ne se lance pas sur le telephone)
 ["rangers", "gants", "pantalon", "veste"].forEach(item => {
   const btn = document.getElementById("btn-" + item);
-  const input = document.getElementById("file-" + item);
+  const gal = document.getElementById("gal-" + item);
+  const inputCam = document.getElementById("file-" + item);
+  const inputGal = document.getElementById("file-gal-" + item);
   const apercu = document.getElementById("apercu-" + item);
 
-  btn.addEventListener("click", () => input.click());
+  btn.addEventListener("click", () => inputCam.click());
+  gal.addEventListener("click", () => inputGal.click());
 
-  input.addEventListener("change", async () => {
-    if (!input.files[0]) return;
+  async function traiter(file) {
+    if (!file) return;
     photos[item] = null;
     btn.classList.remove("pris");
     btn.textContent = "Envoi de la photo...";
     try {
-      const dataUrl = await compresserImage(input.files[0]);
+      const dataUrl = await compresserImage(file);
       apercu.src = dataUrl;
       const url = await uploaderPhoto(dataUrl);
       photos[item] = url;
       btn.textContent = "Photo envoyee \u2713";
       btn.classList.add("pris");
     } catch (err) {
-      btn.textContent = "Echec, reessaie";
+      btn.textContent = "Echec : " + String((err && err.message) || "erreur").slice(0, 70);
       console.error(err);
     }
-  });
+  }
+
+  inputCam.addEventListener("change", () => { traiter(inputCam.files[0]); inputCam.value = ""; });
+  inputGal.addEventListener("change", () => { traiter(inputGal.files[0]); inputGal.value = ""; });
 });
 
 // Envoi du mail (un seul, avec les liens vers les photos)

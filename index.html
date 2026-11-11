@@ -317,27 +317,36 @@ document.querySelectorAll("#momentChoix button").forEach(btn => {
 });
 
 // Compression d'une image en dataURL JPEG
-function compresserImage(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      const img = new Image();
-      img.onload = () => {
-        const largeur = Math.min(LARGEUR_DEPART, img.width);
-        const ratio = largeur / img.width;
-        const canvas = document.createElement("canvas");
-        canvas.width = largeur;
-        canvas.height = img.height * ratio;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", QUALITE_JPEG));
-      };
-      img.onerror = reject;
-      img.src = e.target.result;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+// Redimensionne des le decodage (createImageBitmap) pour ne pas charger
+// la photo en pleine resolution : evite l'erreur "memoire insuffisante".
+async function compresserImage(file) {
+  let source = null, largeur = 0, hauteur = 0;
+  if (window.createImageBitmap) {
+    try {
+      const bmp = await createImageBitmap(file, { resizeWidth: LARGEUR_DEPART, resizeQuality: "medium" });
+      source = bmp; largeur = bmp.width; hauteur = bmp.height;
+    } catch (e) { source = null; }
+  }
+  if (!source) {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = url;
+    });
+    URL.revokeObjectURL(url);
+    const ratio = Math.min(1, LARGEUR_DEPART / img.width);
+    largeur = Math.round(img.width * ratio);
+    hauteur = Math.round(img.height * ratio);
+    source = img;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = largeur;
+  canvas.height = hauteur;
+  canvas.getContext("2d").drawImage(source, 0, 0, largeur, hauteur);
+  if (source.close) source.close();
+  return canvas.toDataURL("image/jpeg", QUALITE_JPEG);
 }
 
 // Upload d'une image compressee vers Cloudinary, retourne son URL publique
